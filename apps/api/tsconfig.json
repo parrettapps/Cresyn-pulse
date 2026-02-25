@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "baseUrl": ".",
+    "paths": {
+      "@cresyn/config": ["../../packages/config/src/index.ts"],
+      "@cresyn/types": ["../../packages/types/src/index.ts"],
+      "@cresyn/db": ["../../packages/db/src/index.ts"],
+      "@cresyn/db/schema": ["../../packages/db/src/schema.ts"],
+      "@cresyn/validation": ["../../packages/validation/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
