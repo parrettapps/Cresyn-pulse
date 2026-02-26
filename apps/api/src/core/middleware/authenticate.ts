@@ -34,7 +34,7 @@ export async function authenticate(
 
   let payload: JWTPayload;
   try {
-    payload = jwt.verify(token, JWT_SECRET) as JWTPayload;
+    payload = jwt.verify(token, JWT_SECRET as string) as JWTPayload;
   } catch (err) {
     const isExpired = err instanceof jwt.TokenExpiredError;
     await reply.code(401).send({
@@ -88,9 +88,10 @@ export async function authenticate(
     permissions: payload.permissions,
     modules: payload.modules,
     jti: payload.jti,
-    ipAddress: request.ip,
-    userAgent: request.headers['user-agent'],
     requestId: request.id,
+    // Optional fields — only set if present
+    ...(request.ip ? { ipAddress: request.ip } : {}),
+    ...(request.headers['user-agent'] ? { userAgent: request.headers['user-agent'] } : {}),
   };
 
   // @ts-expect-error — Fastify request augmentation (declared in types/fastify.d.ts)

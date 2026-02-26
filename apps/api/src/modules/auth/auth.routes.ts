@@ -1,137 +1,67 @@
 import type { FastifyInstance } from 'fastify';
-import { ZodError } from 'zod';
-import {
-  signupSchema,
-  loginSchema,
-  verifyEmailSchema,
-  resetPasswordRequestSchema,
-} from '@cresyn/validation';
-import { AuthService } from './auth.service.js';
-import { RATE_LIMITS } from '@cresyn/config';
+import { toNodeHandler } from 'better-auth/node';
+import { auth } from '../../lib/auth.js';
 
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env['NODE_ENV'] === 'production',
-  sameSite: 'strict' as const,
-  path: '/api/v1/auth/refresh',
-  maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
-};
+// ============================================================
+// AUTH ROUTES — Powered by Better Auth
+//
+// Better Auth handles all auth endpoints natively:
+//   POST /api/v1/auth/sign-in/email          — email/password login
+//   POST /api/v1/auth/sign-up/email          — email/password signup
+//   POST /api/v1/auth/sign-out               — logout
+//   GET  /api/v1/auth/get-session            — get current session
+//   GET  /api/v1/auth/sign-in/google         — initiate Google OAuth
+//   GET  /api/v1/auth/callback/google        — Google OAuth callback
+//   POST /api/v1/auth/two-factor/enable      — enable TOTP 2FA
+//   POST /api/v1/auth/two-factor/verify-totp — verify TOTP code
+//   POST /api/v1/auth/two-factor/disable     — disable 2FA
+//   GET  /api/v1/auth/two-factor/generate    — get QR code for setup
+//
+// These routes are intentionally PUBLIC — Better Auth handles its
+// own session validation internally. The authenticate preHandler
+// is NOT applied here.
+// ============================================================
+
+const betterAuthNodeHandler = toNodeHandler(auth);
 
 export async function authRoutes(app: FastifyInstance) {
-  // ---- SIGNUP ----
-  app.post('/signup', {
-    config: {
-      rateLimit: {
-        max: RATE_LIMITS.AUTH_SIGNUP_MAX,
-        timeWindow: RATE_LIMITS.AUTH_SIGNUP_WINDOW_MS,
-        keyGenerator: (req) => req.ip,
-      },
-    },
-    handler: async (request, reply) => {
-      const body = signupSchema.parse(request.body);
-      const result = await AuthService.signup(body, request.ip);
-
-      return reply.code(201).send({
-        message: 'Account created. Please check your email to verify your address.',
-        userId: result.userId,
-        tenantId: result.tenantId,
-      });
-    },
-  });
-
-  // ---- LOGIN ----
-  app.post('/login', {
-    config: {
-      rateLimit: {
-        max: RATE_LIMITS.AUTH_LOGIN_MAX,
-        timeWindow: RATE_LIMITS.AUTH_LOGIN_WINDOW_MS,
-        keyGenerator: (req) => req.ip,
-      },
-    },
-    handler: async (request, reply) => {
-      const body = loginSchema.parse(request.body);
-      const { accessToken, refreshToken, tenantId } = await AuthService.login(
-        body,
-        request.ip,
-        request.headers['user-agent'],
-      );
-
-      // Set refresh token as httpOnly cookie
-      void reply.setCookie('refresh_token', refreshToken, COOKIE_OPTIONS);
-
-      return reply.send({
-        accessToken,
-        tenantId,
-        tokenType: 'Bearer',
-        expiresIn: 3600,
-      });
-    },
-  });
-
-  // ---- REFRESH TOKEN ----
-  app.post('/refresh', {
-    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
-    handler: async (request, reply) => {
-      const refreshToken = (request.cookies as Record<string, string>)?.['refresh_token'];
-      if (!refreshToken) {
-        return reply.code(401).send({
-          type: 'https://api.cresyn.com/errors/unauthorized',
-          title: 'Unauthorized',
-          status: 401,
-          detail: 'Missing refresh token',
-        });
+  // Better Auth uses better-call/node internally, which reads the body from
+  // req.raw. It first checks if req.body is already populated (pre-parsed),
+  // and if so, wraps it in a ReadableStream rather than consuming the raw
+  // stream again. We must parse the body and attach it to req.raw so Better
+  // Auth can find it — otherwise it waits for stream data that never comes.
+  // Read the body as a Buffer so Fastify doesn't corrupt it, then attach the
+  // raw Buffer to req.raw. better-call's getRequest() checks req.body first —
+  // if it's a string it wraps it in a ReadableStream. Since Buffer is not a
+  // string, it will serialize it via JSON.stringify, so we convert to string.
+  app.addContentTypeParser(
+    ['application/json', 'application/x-www-form-urlencoded'],
+    { parseAs: 'buffer' },
+    function (req, body, done) {
+      // Attach the body as a string to req.raw so better-call can find it
+      // without re-consuming the already-drained stream.
+      if (body && body.length > 0) {
+        (req.raw as unknown as Record<string, unknown>)['body'] = body.toString('utf-8');
       }
-
-      const { accessToken, refreshToken: newRefreshToken } =
-        await AuthService.refreshToken(refreshToken);
-
-      void reply.setCookie('refresh_token', newRefreshToken, COOKIE_OPTIONS);
-
-      return reply.send({
-        accessToken,
-        tokenType: 'Bearer',
-        expiresIn: 3600,
-      });
+      done(null, null);
     },
-  });
+  );
 
-  // ---- LOGOUT ----
-  app.post('/logout', {
-    handler: async (request, reply) => {
-      void reply.clearCookie('refresh_token', { path: '/api/v1/auth/refresh' });
-      return reply.code(204).send();
-    },
-  });
+  // Catch-all: forward all /api/v1/auth/* requests to Better Auth.
+  app.all('/*', async (request, reply) => {
+    // @fastify/cors runs in its onRequest hook and sets CORS headers on the Fastify
+    // reply object before we get here. betterAuthNodeHandler writes directly to
+    // reply.raw (bypassing Fastify's onSend lifecycle), so those headers are never
+    // flushed. We copy all Fastify-managed headers to reply.raw first so they
+    // survive the raw write.
+    for (const [name, value] of Object.entries(reply.getHeaders())) {
+      if (value !== undefined) {
+        reply.raw.setHeader(name, Array.isArray(value) ? value.map(String) : String(value));
+      }
+    }
 
-  // ---- VERIFY EMAIL ----
-  app.post('/verify-email', {
-    handler: async (request, reply) => {
-      const { token } = verifyEmailSchema.parse(request.body);
-      await AuthService.verifyEmail(token);
-      return reply.send({ message: 'Email verified successfully' });
-    },
-  });
-
-  // ---- REQUEST PASSWORD RESET ----
-  app.post('/reset-password/request', {
-    config: {
-      rateLimit: {
-        max: RATE_LIMITS.AUTH_RESET_MAX,
-        timeWindow: RATE_LIMITS.AUTH_RESET_WINDOW_MS,
-        keyGenerator: (req) => {
-          const body = req.body as { email?: string } | undefined;
-          return body?.email ?? req.ip;
-        },
-      },
-    },
-    handler: async (request, reply) => {
-      const { email } = resetPasswordRequestSchema.parse(request.body);
-      // Always return 200 — never reveal whether email exists
-      // TODO: Implement reset email via Resend in Week 3
-      void email; // used in service call
-      return reply.send({
-        message: 'If an account exists for that email, a reset link has been sent.',
-      });
-    },
+    await betterAuthNodeHandler(request.raw, reply.raw);
+    // Tell Fastify the response has already been sent via reply.raw
+    reply.sent = true;
   });
 }

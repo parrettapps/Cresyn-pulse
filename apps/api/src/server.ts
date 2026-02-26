@@ -7,12 +7,12 @@ import { redis } from './core/redis.js';
 import { logger } from './core/logger.js';
 import { moduleRegistry } from './modules/registry.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { onboardingRoutes } from './modules/onboarding/onboarding.routes.js';
 import { healthRoutes } from './core/health.routes.js';
 import { errorHandler } from './core/error-handler.js';
 import { RATE_LIMITS } from '@cresyn/config';
 
 const PORT = parseInt(process.env['API_PORT'] ?? '3001', 10);
-const IS_DEV = process.env['NODE_ENV'] === 'development';
 
 async function buildServer() {
   const app = Fastify({
@@ -35,8 +35,14 @@ async function buildServer() {
   });
 
   // ---- CORS ----
+  const webUrl = process.env['WEB_URL'] ?? 'http://localhost:3000';
+  // In dev, the browser may use 127.0.0.1 instead of localhost (e.g. preview tools).
+  const allowedOrigins =
+    process.env['NODE_ENV'] === 'production'
+      ? [webUrl]
+      : [webUrl, webUrl.replace('localhost', '127.0.0.1')];
   await app.register(cors, {
-    origin: process.env['WEB_URL'] ?? 'http://localhost:3000',
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID', 'X-Request-ID'],
@@ -99,8 +105,11 @@ async function buildServer() {
   // ---- Health check (public, no auth) ----
   await app.register(healthRoutes);
 
-  // ---- Auth routes (public, with own rate limiting) ----
+  // ---- Auth routes (public — Better Auth handles session validation internally) ----
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
+
+  // ---- Onboarding (public — validates Better Auth session cookie, not JWT) ----
+  await app.register(onboardingRoutes, { prefix: '/api/v1' });
 
   // ---- Stripe webhook (public endpoint, validated by signature) ----
   // await app.register(stripeWebhookRoutes, { prefix: '/api/webhooks' });

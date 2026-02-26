@@ -43,20 +43,21 @@ export class AuditService {
     requestId?: string;
     reason?: string;
   }): Promise<void> {
+    // Use spread to omit optional fields rather than passing undefined
+    // (required by exactOptionalPropertyTypes: true)
     await AuditService.log({
-      tenantId: undefined,
-      actorId: params.userId,
       action: params.action,
       resourceType: 'user',
       resourceId: params.userId ?? params.email ?? 'unknown',
-      resourceName: params.email,
       metadata: {
         email: params.email,
         reason: params.reason,
       },
-      ipAddress: params.ipAddress,
-      userAgent: params.userAgent,
-      requestId: params.requestId,
+      ...(params.userId ? { actorId: params.userId } : {}),
+      ...(params.email ? { resourceName: params.email } : {}),
+      ...(params.ipAddress ? { ipAddress: params.ipAddress } : {}),
+      ...(params.userAgent ? { userAgent: params.userAgent } : {}),
+      ...(params.requestId ? { requestId: params.requestId } : {}),
     });
   }
 }

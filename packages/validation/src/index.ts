@@ -1,11 +1,5 @@
 import { z } from 'zod';
-import {
-  COMPANY_TYPES,
-  PAYMENT_TERMS,
-  ROLES,
-  FILE_LIMITS,
-  PAGINATION,
-} from '@cresyn/config';
+import { COMPANY_TYPES, PAYMENT_TERMS, ROLES, PAGINATION } from '@cresyn/config';
 
 // ============================================================
 // COMMON PRIMITIVES

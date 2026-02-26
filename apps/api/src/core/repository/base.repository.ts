@@ -1,8 +1,7 @@
 import { db } from '@cresyn/db';
-import { eq, and, isNull, desc, lt, gt, type SQL } from 'drizzle-orm';
+import { eq, and, isNull, type SQL } from 'drizzle-orm';
 import type { PgTableWithColumns } from 'drizzle-orm/pg-core';
 import type { RequestContext } from '@cresyn/types';
-import { PAGINATION } from '@cresyn/config';
 import { AuditService } from '../services/audit.service.js';
 import type { AuditAction, ResourceType } from '@cresyn/config';
 
@@ -42,10 +41,12 @@ export abstract class BaseRepository<TTable extends PgTableWithColumns<any>> {
 
   // ---- Find by ID (tenant-scoped) ----
   async findById(id: string): Promise<TTable['$inferSelect'] | null> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tbl = this.table as any;
     const results = await this.db
       .select()
-      .from(this.table)
-      .where(and(eq((this.table as any)['id'], id), this.baseFilter()))
+      .from(tbl)
+      .where(and(eq(tbl['id'], id), this.baseFilter()))
       .limit(1);
 
     return (results[0] as TTable['$inferSelect']) ?? null;
@@ -85,9 +86,10 @@ export abstract class BaseRepository<TTable extends PgTableWithColumns<any>> {
       resourceType: this.resourceType,
       resourceId: id,
       changes: { before, after: { ...before, deletedAt: new Date() } },
-      ipAddress: this.ctx.ipAddress,
-      userAgent: this.ctx.userAgent,
       requestId: this.ctx.requestId,
+      // Only include optional fields if they are defined
+      ...(this.ctx.ipAddress ? { ipAddress: this.ctx.ipAddress } : {}),
+      ...(this.ctx.userAgent ? { userAgent: this.ctx.userAgent } : {}),
     });
   }
 

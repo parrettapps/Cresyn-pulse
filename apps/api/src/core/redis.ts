@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { logger } from './logger.js';
 
 if (!process.env['REDIS_URL']) {
@@ -19,7 +19,7 @@ export const redis = new Redis(process.env['REDIS_URL'], {
 });
 
 redis.on('connect', () => logger.info('Redis connected'));
-redis.on('error', (err) => logger.error({ err }, 'Redis error'));
+redis.on('error', (err: Error) => logger.error({ err }, 'Redis error'));
 redis.on('close', () => logger.warn('Redis connection closed'));
 
 // Helper: revoke a JWT by its jti (for logout, deactivation)

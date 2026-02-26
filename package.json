@@ -28,6 +28,9 @@
     "typescript": "^5.7.0"
   },
   "pnpm": {
+    "overrides": {
+      "drizzle-orm": "^0.45.1"
+    },
     "onlyBuiltDependencies": [
       "argon2",
       "esbuild",

@@ -24,6 +24,12 @@ Thumbs.db
 *.swp
 *.swo
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Claude Code — local-only settings (launch.json is intentionally committed)
+.claude/settings.local.json
+
 # Logs
 *.log
 npm-debug.log*
