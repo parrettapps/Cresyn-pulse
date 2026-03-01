@@ -4,7 +4,8 @@ import { useState } from 'react';
 import {
   DndContext,
   DragOverlay,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
   PointerSensor,
   useSensor,
@@ -61,26 +62,77 @@ export function PipelineKanban({ pipeline, deals, loading, onDealMoved }: Pipeli
 
     // Get the deal and target stage
     const dealId = active.id as string;
-    const targetStageId = over.id as string;
+    // Check if we're dropping over a sortable item (another deal) or directly on a droppable (stage)
+    // If dropping over a deal, get its container (stage) ID from sortable data
+    const targetStageId = (over.data.current?.sortable?.containerId || over.id) as string;
     const deal = deals.find((d) => d.id === dealId);
+    const targetStage = pipeline.stages.find((s) => s.id === targetStageId);
 
-    if (!deal || deal.stageId === targetStageId) return;
+    console.log('=== DRAG DEBUG ===');
+    console.log('Deal being dragged:', dealId, deal?.name);
+    console.log('Over ID:', over.id);
+    console.log('Over data FULL:', JSON.stringify(over.data, null, 2));
+    console.log('Over rect:', over.rect);
+    console.log('Is over a sortable item?', !!over.data.current?.sortable);
+    console.log('Sortable containerId:', over.data.current?.sortable?.containerId);
+    console.log('Resolved target stage ID:', targetStageId);
+    console.log('Target stage found:', targetStage?.name, 'isWon:', targetStage?.isWon, 'isLost:', targetStage?.isLost);
 
-    // Optimistic update
-    const previousDeals = [...deals];
+    // Check if the over.id is a deal
+    const overDeal = deals.find(d => d.id === over.id);
+    if (overDeal) {
+      console.log('Over deal:', overDeal.name, 'in stage:', overDeal.stageId);
+      const overDealStage = pipeline.stages.find(s => s.id === overDeal.stageId);
+      console.log('Over deal stage:', overDealStage?.name);
+    }
+    console.log('=================');
+
+    if (!deal || !targetStage || deal.stageId === targetStageId) return;
 
     try {
-      // Move deal to new stage
-      await apiClient.post(`/deals/${dealId}/move-stage`, {
-        toStageId: targetStageId,
-      });
+      const isClosed = deal.status === 'closed_won' || deal.status === 'closed_lost';
+      const isMovingToWonLost = targetStage.isWon || targetStage.isLost;
+      const isMovingToOpenStage = !targetStage.isWon && !targetStage.isLost;
+
+      console.log('Target stage flags:', { isWon: targetStage.isWon, isLost: targetStage.isLost });
+
+      if (isClosed && isMovingToOpenStage) {
+        // Reopening a closed deal - use update endpoint
+        console.log(`Reopening deal ${dealId} and moving to stage ${targetStageId}`);
+        await apiClient.patch(`/deals/${dealId}`, {
+          stageId: targetStageId,
+        });
+        console.log('Deal reopened and moved successfully');
+      } else if (isMovingToWonLost) {
+        // Use close endpoint for Won/Lost stages
+        const status = targetStage.isWon ? 'closed_won' : 'closed_lost';
+        const today = new Date().toISOString().split('T')[0];
+
+        console.log(`Closing deal ${dealId} as ${status} to stage ${targetStageId}`);
+        await apiClient.post(`/deals/${dealId}/close`, {
+          status,
+          actualClose: today,
+          ...(status === 'closed_lost' ? { lostReason: 'Moved to Lost stage' } : {}),
+        });
+        console.log('Deal closed successfully');
+      } else {
+        // Use move-stage endpoint for regular stages
+        console.log(`Moving deal ${dealId} to stage ${targetStageId}`);
+        await apiClient.post(`/deals/${dealId}/move-stage`, {
+          toStageId: targetStageId,
+        });
+        console.log('Deal moved successfully');
+      }
 
       // Refresh deals
       onDealMoved();
-    } catch (error) {
-      console.error('Failed to move deal:', error);
-      // Revert optimistic update on error
+    } catch (error: any) {
+      console.error('Failed to move/close deal:', error);
+      console.error('Error details:', error.response?.data);
+      // Refresh to revert any optimistic updates
       onDealMoved();
+      // Show error to user
+      alert(`Failed to move deal: ${error.response?.data?.detail || error.message}`);
     }
   };
 
@@ -105,7 +157,7 @@ export function PipelineKanban({ pipeline, deals, loading, onDealMoved }: Pipeli
     <>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={pointerWithin}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
@@ -150,19 +202,18 @@ export function PipelineKanban({ pipeline, deals, loading, onDealMoved }: Pipeli
                     items={stageDeals.map((d) => d.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    <div className="flex flex-1 flex-col gap-3 p-3 min-h-32">
-                      {stageDeals.length === 0 ? (
+                    <div className="flex flex-1 flex-col gap-3 p-3 min-h-[200px]">
+                      {stageDeals.map((deal) => (
+                        <DealCard
+                          key={deal.id}
+                          deal={deal}
+                          onClick={() => setSelectedDeal(deal)}
+                        />
+                      ))}
+                      {stageDeals.length === 0 && (
                         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-neutral-200 p-6">
-                          <p className="text-xs text-neutral-400">No deals in this stage</p>
+                          <p className="text-xs text-neutral-400">Drop deals here</p>
                         </div>
-                      ) : (
-                        stageDeals.map((deal) => (
-                          <DealCard
-                            key={deal.id}
-                            deal={deal}
-                            onClick={() => setSelectedDeal(deal)}
-                          />
-                        ))
                       )}
                     </div>
                   </SortableContext>

@@ -13,14 +13,17 @@ interface DealCardProps {
 }
 
 export function DealCard({ deal, onClick }: DealCardProps) {
+  const isClosed = deal.status !== 'open';
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: deal.id,
+    disabled: false, // Allow dragging all deals, including closed ones
   });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.5 : isClosed ? 0.7 : 1,
   };
 
   const value = deal.value ? parseFloat(deal.value) : 0;
@@ -31,9 +34,13 @@ export function DealCard({ deal, onClick }: DealCardProps) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
+      {...listeners} // Allow dragging all deals
       onClick={onClick}
-      className="group cursor-pointer rounded-lg border border-neutral-200 bg-white p-3 shadow-sm transition-all hover:border-primary-300 hover:shadow-md"
+      className={`group cursor-pointer rounded-lg border p-3 shadow-sm transition-all ${
+        isClosed
+          ? 'border-neutral-200 bg-neutral-50'
+          : 'border-neutral-200 bg-white hover:border-primary-300 hover:shadow-md'
+      }`}
     >
       {/* Deal Name */}
       <h3 className="mb-2 text-sm font-semibold text-neutral-900 line-clamp-2">{deal.name}</h3>
@@ -83,8 +90,18 @@ export function DealCard({ deal, onClick }: DealCardProps) {
       )}
 
       {/* Badges */}
-      {(deal.source || deal.dealType) && (
+      {(deal.status !== 'open' || deal.source || deal.dealType) && (
         <div className="mt-2 flex flex-wrap gap-1">
+          {deal.status === 'closed_won' && (
+            <Badge variant="success" size="sm">
+              Won
+            </Badge>
+          )}
+          {deal.status === 'closed_lost' && (
+            <Badge variant="neutral" size="sm">
+              Lost
+            </Badge>
+          )}
           {deal.source && (
             <Badge variant="secondary" size="sm">
               {deal.source}

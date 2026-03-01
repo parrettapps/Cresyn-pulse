@@ -93,9 +93,11 @@ export function DealFormModal({ pipeline, deal, onClose, onSuccess }: DealFormMo
         await apiClient.post('/deals', formData);
       }
       onSuccess();
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Failed to ${isEditMode ? 'update' : 'create'} deal:`, error);
-      alert(`Failed to ${isEditMode ? 'update' : 'create'} deal. Please try again.`);
+      console.error('Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.detail || error.message || 'Unknown error';
+      alert(`Failed to ${isEditMode ? 'update' : 'create'} deal: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
