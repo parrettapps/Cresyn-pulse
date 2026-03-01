@@ -54,7 +54,7 @@ export default function PipelinePage() {
       const response = await apiClient.get<PaginatedResponse<DealWithRelations>>('/deals', {
         params: {
           pipelineId: selectedPipeline.id,
-          status: 'open',
+          // Removed status filter to show all deals including closed won/lost
           search: searchQuery || undefined,
           limit: 100,
         },
@@ -76,9 +76,10 @@ export default function PipelinePage() {
     fetchDeals();
   };
 
-  // Calculate stats
-  const openDeals = deals.length;
-  const pipelineValue = deals.reduce((sum, deal) => {
+  // Calculate stats (only for open deals)
+  const openDealsOnly = deals.filter((d) => d.status === 'open');
+  const openDeals = openDealsOnly.length;
+  const pipelineValue = openDealsOnly.reduce((sum, deal) => {
     return sum + (deal.value ? parseFloat(deal.value) : 0);
   }, 0);
 
@@ -138,7 +139,7 @@ export default function PipelinePage() {
         <StatCard
           title="Weighted Value"
           value={`$${(
-            deals.reduce((sum, deal) => {
+            openDealsOnly.reduce((sum, deal) => {
               const value = deal.value ? parseFloat(deal.value) : 0;
               const probability = deal.probability || 0;
               return sum + (value * probability) / 100;
@@ -149,7 +150,7 @@ export default function PipelinePage() {
         <StatCard
           title="Avg. Probability"
           value={`${Math.round(
-            deals.reduce((sum, deal) => sum + (deal.probability || 0), 0) / (deals.length || 1)
+            openDealsOnly.reduce((sum, deal) => sum + (deal.probability || 0), 0) / (openDealsOnly.length || 1)
           )}%`}
           iconColor="warning"
         />

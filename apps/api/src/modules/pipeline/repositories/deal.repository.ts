@@ -364,6 +364,10 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
   async update(id: string, input: UpdateDealInput): Promise<DealWithRelations> {
     const existing = await this.findByIdOrThrow(id);
 
+    // Track if we're reopening a closed deal
+    let isReopening = false;
+    let targetStage: any = null;
+
     // If changing stage, validate it belongs to the same pipeline
     if (input.stageId && input.stageId !== existing.stageId) {
       const stage = await this.db
@@ -383,21 +387,41 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
         throw new ValidationError('Stage does not belong to this deal\'s pipeline');
       }
 
+      targetStage = stage[0];
+
+      // Check if we're reopening a closed deal (moving from Won/Lost to regular stage)
+      const isClosed = existing.status === 'closed_won' || existing.status === 'closed_lost';
+      const isMovingToOpenStage = !stage[0].isWon && !stage[0].isLost;
+
+      if (isClosed && isMovingToOpenStage) {
+        isReopening = true;
+      }
+
       // Update probability from stage default if not manually overridden
       if (!input.probability && !existing.probabilityOverride) {
         input.probability = stage[0].defaultProbability;
       }
     }
 
+    // Build the update object
+    const updateData: any = {
+      ...input,
+      value: input.value?.toString(),
+      probabilityOverride: input.probability !== undefined || existing.probabilityOverride,
+      updatedBy: this.ctx.userId,
+      updatedAt: new Date(),
+    };
+
+    // If reopening, add the reopening fields
+    if (isReopening) {
+      updateData.status = 'open';
+      updateData.actualClose = null;
+      updateData.lostReason = null;
+    }
+
     const [updated] = await this.db
       .update(pipelineDeals)
-      .set({
-        ...input,
-        value: input.value?.toString(),
-        probabilityOverride: input.probability !== undefined || existing.probabilityOverride,
-        updatedBy: this.ctx.userId,
-        updatedAt: new Date(),
-      })
+      .set(updateData)
       .where(and(eq(pipelineDeals.id, id), this.tenantScope()))
       .returning();
 
@@ -411,6 +435,7 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
       resourceId: id,
       resourceName: updated!.name,
       changes: { before: existing, after: updated },
+      metadata: isReopening ? { action: 'deal_reopened' } : undefined,
       requestId: this.ctx.requestId,
       ...(this.ctx.ipAddress ? { ipAddress: this.ctx.ipAddress } : {}),
       ...(this.ctx.userAgent ? { userAgent: this.ctx.userAgent } : {}),
@@ -439,6 +464,11 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
 
     if (!newStage[0]) {
       throw new ValidationError('Stage does not belong to this deal\'s pipeline');
+    }
+
+    // Prevent moving to Won/Lost stages via this endpoint - use closeDeal instead
+    if (newStage[0].isWon || newStage[0].isLost) {
+      throw new ValidationError('Cannot move deal to Won/Lost stage. Use the close deal endpoint instead.');
     }
 
     // Calculate days in previous stage
@@ -507,10 +537,46 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
       throw new ValidationError('Deal is already closed');
     }
 
+    // Find the appropriate Won/Lost stage for this pipeline
+    const targetStage = await this.db
+      .select()
+      .from(pipelineStages)
+      .where(
+        and(
+          eq(pipelineStages.pipelineId, existing.pipelineId),
+          eq(pipelineStages.tenantId, this.tenantId),
+          input.status === 'closed_won'
+            ? eq(pipelineStages.isWon, true)
+            : eq(pipelineStages.isLost, true),
+          isNull(pipelineStages.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    if (!targetStage[0]) {
+      throw new ValidationError(
+        `No ${input.status === 'closed_won' ? 'Won' : 'Lost'} stage found for this pipeline`
+      );
+    }
+
+    // Calculate days in previous stage
+    const previousHistory = await this.db
+      .select()
+      .from(dealStageHistory)
+      .where(eq(dealStageHistory.dealId, id))
+      .orderBy(desc(dealStageHistory.movedAt))
+      .limit(1);
+
+    const daysInPreviousStage = previousHistory[0]
+      ? Math.floor((Date.now() - new Date(previousHistory[0].movedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    // Update deal with closed status and move to Won/Lost stage
     const [updated] = await this.db
       .update(pipelineDeals)
       .set({
         status: input.status,
+        stageId: targetStage[0].id,
         actualClose: input.actualClose,
         lostReason: input.lostReason || null,
         updatedBy: this.ctx.userId,
@@ -518,6 +584,18 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
       })
       .where(and(eq(pipelineDeals.id, id), this.tenantScope()))
       .returning();
+
+    // Record stage history
+    await this.db.insert(dealStageHistory).values({
+      tenantId: this.tenantId,
+      dealId: id,
+      fromStageId: existing.stageId,
+      toStageId: targetStage[0].id,
+      daysInPreviousStage,
+      movedBy: this.ctx.userId,
+      movedAt: new Date(),
+      notes: input.notes || null,
+    });
 
     // Audit log
     await AuditService.log({
@@ -529,8 +607,13 @@ export class DealRepository extends BaseRepository<typeof pipelineDeals> {
       resourceId: id,
       resourceName: updated!.name,
       changes: {
-        before: { status: existing.status },
-        after: { status: input.status, actualClose: input.actualClose, lostReason: input.lostReason },
+        before: { status: existing.status, stageId: existing.stageId },
+        after: {
+          status: input.status,
+          stageId: targetStage[0].id,
+          actualClose: input.actualClose,
+          lostReason: input.lostReason
+        },
       },
       metadata: { action: 'deal_closed', notes: input.notes },
       requestId: this.ctx.requestId,

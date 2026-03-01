@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
 // ============================================================
+// HELPER SCHEMAS
+// ============================================================
+
+// Helper to transform empty strings and null to undefined for optional fields
+const emptyStringToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((val) => (val === '' || val === null ? undefined : val), schema);
+
+// ============================================================
 // PIPELINE VALIDATION SCHEMAS
 // ============================================================
 
@@ -46,20 +54,20 @@ export const reorderStagesSchema = z.object({
 
 export const createDealSchema = z.object({
   pipelineId: z.string().uuid('Invalid pipeline ID'),
-  companyId: z.string().uuid('Invalid company ID').optional(),
-  contactId: z.string().uuid('Invalid contact ID').optional(),
+  companyId: emptyStringToUndefined(z.string().uuid('Invalid company ID').optional()),
+  contactId: emptyStringToUndefined(z.string().uuid('Invalid contact ID').optional()),
   stageId: z.string().uuid('Invalid stage ID'),
   name: z.string().min(1, 'Deal name is required').max(255),
   value: z.number().min(0).optional(),
   currency: z.string().length(3, 'Currency must be 3-letter code').default('USD'),
   probability: z.number().int().min(0).max(100).optional(),
-  expectedClose: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)').optional(),
-  ownerId: z.string().uuid('Invalid owner ID').optional(),
-  source: z.enum(['inbound', 'outbound', 'referral', 'partner']).optional(),
-  dealType: z.enum(['new_business', 'expansion', 'renewal', 'churn_recovery']).optional(),
-  forecastCategory: z.enum(['commit', 'best_case', 'pipeline', 'omitted']).optional(),
-  nextStepDescription: z.string().max(500).optional(),
-  nextStepDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)').optional(),
+  expectedClose: emptyStringToUndefined(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)').optional()),
+  ownerId: emptyStringToUndefined(z.string().uuid('Invalid owner ID').optional()),
+  source: emptyStringToUndefined(z.enum(['inbound', 'outbound', 'referral', 'partner']).optional()),
+  dealType: emptyStringToUndefined(z.enum(['new_business', 'expansion', 'renewal', 'churn_recovery']).optional()),
+  forecastCategory: emptyStringToUndefined(z.enum(['commit', 'best_case', 'pipeline', 'omitted']).optional()),
+  nextStepDescription: emptyStringToUndefined(z.string().max(500).optional()),
+  nextStepDueDate: emptyStringToUndefined(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)').optional()),
   metadata: z.record(z.unknown()).optional(),
 });
 
