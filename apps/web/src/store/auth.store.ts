@@ -11,11 +11,13 @@ interface AuthState {
   permissions: Permission[];
   modules: ModuleKey[];
   isAuthenticated: boolean;
+  _hasHydrated: boolean;
   // Actions
   setAuth: (token: string, payload: JWTPayload) => void;
   clearAuth: () => void;
   hasPermission: (permission: Permission) => boolean;
   hasModule: (moduleKey: ModuleKey) => boolean;
+  setHasHydrated: (state: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -28,6 +30,7 @@ export const useAuthStore = create<AuthState>()(
       permissions: [],
       modules: [],
       isAuthenticated: false,
+      _hasHydrated: false,
 
       setAuth: (token, payload) =>
         set({
@@ -53,19 +56,23 @@ export const useAuthStore = create<AuthState>()(
 
       hasPermission: (permission) => get().permissions.includes(permission),
       hasModule: (moduleKey) => get().modules.includes(moduleKey),
+      setHasHydrated: (state) => set({ _hasHydrated: state }),
     }),
     {
       name: 'cresyn-auth',
-      // Only persist non-sensitive state — token refresh happens via httpOnly cookie
+      // Persist all auth state including accessToken
       partialize: (state) => ({
+        accessToken: state.accessToken,
         tenantId: state.tenantId,
         userId: state.userId,
         role: state.role,
         permissions: state.permissions,
         modules: state.modules,
         isAuthenticated: state.isAuthenticated,
-        // accessToken is NOT persisted — always re-fetched via refresh token on page load
       }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     },
   ),
 );

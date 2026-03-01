@@ -28,7 +28,7 @@ interface NavItem {
 }
 
 const MAIN_NAV: NavItem[] = [
-  { href: '/app/crm',        label: 'CRM',        icon: Users },
+  { href: '/app/accounts',   label: 'Accounts',   icon: Users },
   { href: '/app/pipeline',   label: 'Pipeline',   icon: TrendingUp },
   { href: '/app/quotes',     label: 'Quotes',     icon: FileText },
   { href: '/app/projects',   label: 'Projects',   icon: FolderKanban },
@@ -115,7 +115,7 @@ export function Sidebar({ userEmail, userName, userAvatar }: SidebarProps) {
         </div>
         <div className="flex flex-col min-w-0">
           <span className="truncate text-sm font-semibold text-white">Cresyn Pulse</span>
-          <span className="text-[10px] text-neutral-500">Internal CRM</span>
+          <span className="text-[10px] text-neutral-500">Account Management</span>
         </div>
       </div>
 

@@ -1,59 +1,178 @@
-import { TrendingUp, DollarSign, Target, Calendar, Plus } from 'lucide-react';
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Plus, Filter, Search } from 'lucide-react';
 import { StatCard } from '../../../components/ui/stat-card';
 import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
-
-const STAGES = [
-  { name: 'Prospecting',  deals: 3,  value: '$42,500',  color: 'bg-neutral-300' },
-  { name: 'Qualification',deals: 2,  value: '$28,000',  color: 'bg-secondary-300' },
-  { name: 'Proposal',     deals: 4,  value: '$115,000', color: 'bg-primary-300' },
-  { name: 'Negotiation',  deals: 1,  value: '$60,000',  color: 'bg-amber-300' },
-  { name: 'Closed Won',   deals: 5,  value: '$190,000', color: 'bg-green-400' },
-];
+import { apiClient } from '../../../lib/api-client';
+import { PipelineKanban } from './components/pipeline-kanban';
+import { DealFormModal } from './components/deal-form-modal';
+import { PipelineSelector } from './components/pipeline-selector';
+import type {
+  PipelineWithStages,
+  DealWithRelations,
+  PaginatedResponse,
+} from '../../../types/pipeline';
 
 export default function PipelinePage() {
+  const [pipelines, setPipelines] = useState<PipelineWithStages[]>([]);
+  const [selectedPipeline, setSelectedPipeline] = useState<PipelineWithStages | null>(null);
+  const [deals, setDeals] = useState<DealWithRelations[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showDealModal, setShowDealModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    fetchPipelines();
+  }, []);
+
+  useEffect(() => {
+    if (selectedPipeline) {
+      fetchDeals();
+    }
+  }, [selectedPipeline, searchQuery]);
+
+  const fetchPipelines = async () => {
+    try {
+      const response = await apiClient.get<PipelineWithStages[]>('/pipelines');
+      setPipelines(response.data);
+      // Select default or first pipeline
+      const defaultPipeline = response.data.find((p) => p.isDefault) || response.data[0];
+      if (defaultPipeline) {
+        setSelectedPipeline(defaultPipeline);
+      }
+    } catch (error) {
+      console.error('Failed to fetch pipelines:', error);
+    }
+  };
+
+  const fetchDeals = async () => {
+    if (!selectedPipeline) return;
+
+    setLoading(true);
+    try {
+      const response = await apiClient.get<PaginatedResponse<DealWithRelations>>('/deals', {
+        params: {
+          pipelineId: selectedPipeline.id,
+          status: 'open',
+          search: searchQuery || undefined,
+          limit: 100,
+        },
+      });
+      setDeals(response.data.data);
+    } catch (error) {
+      console.error('Failed to fetch deals:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDealCreated = () => {
+    setShowDealModal(false);
+    fetchDeals();
+  };
+
+  const handleDealMoved = () => {
+    fetchDeals();
+  };
+
+  // Calculate stats
+  const openDeals = deals.length;
+  const pipelineValue = deals.reduce((sum, deal) => {
+    return sum + (deal.value ? parseFloat(deal.value) : 0);
+  }, 0);
+
   return (
     <div className="flex flex-col min-h-full">
+      {/* Header */}
       <div className="border-b border-neutral-200 bg-white px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-neutral-900">Pipeline</h1>
-            <p className="mt-0.5 text-sm text-neutral-500">Deal stages and opportunity tracking.</p>
+            <p className="mt-0.5 text-sm text-neutral-500">Track deals through your sales stages</p>
           </div>
-          <Button size="sm">
-            <Plus className="h-4 w-4" />
-            New Deal
+          <div className="flex items-center gap-3">
+            <PipelineSelector
+              pipelines={pipelines}
+              selected={selectedPipeline}
+              onSelect={setSelectedPipeline}
+            />
+            <Button size="sm" onClick={() => setShowDealModal(true)}>
+              <Plus className="h-4 w-4" />
+              New Deal
+            </Button>
+          </div>
+        </div>
+
+        {/* Search and filters */}
+        <div className="mt-4 flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <input
+              type="text"
+              placeholder="Search deals..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg border border-neutral-200 py-2 pl-10 pr-4 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+          <Button variant="outline" size="sm">
+            <Filter className="h-4 w-4" />
+            Filters
           </Button>
         </div>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-2 gap-4 p-6 sm:grid-cols-4">
-        <StatCard title="Open Deals" value="10" icon={TrendingUp} iconColor="primary" />
-        <StatCard title="Pipeline Value" value="$245K" delta="+12% vs last month" deltaDirection="up" icon={DollarSign} iconColor="success" />
-        <StatCard title="Win Rate" value="33%" icon={Target} iconColor="secondary" />
-        <StatCard title="Avg. Deal Age" value="18d" icon={Calendar} iconColor="warning" />
+        <StatCard
+          title="Open Deals"
+          value={openDeals.toString()}
+          iconColor="primary"
+        />
+        <StatCard
+          title="Pipeline Value"
+          value={`$${(pipelineValue / 1000).toFixed(0)}K`}
+          iconColor="success"
+        />
+        <StatCard
+          title="Weighted Value"
+          value={`$${(
+            deals.reduce((sum, deal) => {
+              const value = deal.value ? parseFloat(deal.value) : 0;
+              const probability = deal.probability || 0;
+              return sum + (value * probability) / 100;
+            }, 0) / 1000
+          ).toFixed(0)}K`}
+          iconColor="secondary"
+        />
+        <StatCard
+          title="Avg. Probability"
+          value={`${Math.round(
+            deals.reduce((sum, deal) => sum + (deal.probability || 0), 0) / (deals.length || 1)
+          )}%`}
+          iconColor="warning"
+        />
       </div>
 
-      {/* Kanban placeholder */}
-      <div className="mx-6 mb-6 grid grid-cols-5 gap-3">
-        {STAGES.map((stage) => (
-          <div key={stage.name} className="flex flex-col rounded-xl border border-neutral-200 bg-white overflow-hidden">
-            <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className={`inline-block h-2 w-2 rounded-full ${stage.color}`} />
-                <span className="text-xs font-semibold text-neutral-700">{stage.name}</span>
-              </div>
-              <Badge variant="neutral">{stage.deals}</Badge>
-            </div>
-            <div className="flex flex-col gap-2 p-3">
-              <p className="text-xs font-medium text-neutral-500">{stage.value}</p>
-              <div className="rounded-lg border border-dashed border-neutral-200 p-3 text-center">
-                <p className="text-[11px] text-neutral-400">Module coming in Week 7</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* Kanban Board */}
+      {selectedPipeline && (
+        <PipelineKanban
+          pipeline={selectedPipeline}
+          deals={deals}
+          loading={loading}
+          onDealMoved={handleDealMoved}
+        />
+      )}
+
+      {/* Modals */}
+      {showDealModal && selectedPipeline && (
+        <DealFormModal
+          pipeline={selectedPipeline}
+          onClose={() => setShowDealModal(false)}
+          onSuccess={handleDealCreated}
+        />
+      )}
     </div>
   );
 }

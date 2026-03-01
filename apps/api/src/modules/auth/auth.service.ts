@@ -16,10 +16,15 @@
 
 import { db, users, userTenantMemberships, tenants, tenantModules, baUsers } from '@cresyn/db';
 import { eq, and } from 'drizzle-orm';
-import { MODULES, type Role } from '@cresyn/config';
+import { MODULES, ROLE_PERMISSIONS, type Role, type Permission, type ModuleKey } from '@cresyn/config';
 import { AuditService } from '../../core/services/audit.service.js';
 import { ConflictError, ValidationError } from '../../core/repository/base.repository.js';
 import { logger } from '../../core/logger.js';
+import jwt from 'jsonwebtoken';
+import type { JWTPayload } from '@cresyn/types';
+
+const JWT_SECRET = process.env['JWT_SECRET'];
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
 
 export class AuthService {
   // ============================================================
@@ -145,6 +150,86 @@ export class AuthService {
       userId: user.id,
       tenantId: membership.tenantId,
       role: membership.role as Role,
+    };
+  }
+
+  // ============================================================
+  // GENERATE JWT TOKEN FOR AUTHENTICATED USER
+  // Creates a JWT access token for an authenticated Better Auth user.
+  // Returns the token along with user/tenant context.
+  // ============================================================
+  static async generateJWT(email: string): Promise<{
+    accessToken: string;
+    payload: JWTPayload;
+    user: {
+      id: string;
+      email: string;
+      name: string;
+    };
+    tenant: {
+      id: string;
+    };
+  }> {
+    // 1. Get app user by email
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email.toLowerCase()),
+    });
+
+    if (!user) {
+      throw new ValidationError('User not found');
+    }
+
+    // 2. Get primary tenant membership
+    const membership = await db.query.userTenantMemberships.findFirst({
+      where: and(
+        eq(userTenantMemberships.userId, user.id),
+        eq(userTenantMemberships.status, 'active'),
+      ),
+    });
+
+    if (!membership) {
+      throw new ValidationError('User has no active tenant membership');
+    }
+
+    // 3. Get tenant's enabled modules
+    const enabledModules = await db.query.tenantModules.findMany({
+      where: and(
+        eq(tenantModules.tenantId, membership.tenantId),
+        eq(tenantModules.enabled, true),
+      ),
+    });
+
+    const modules = enabledModules.map((m) => m.moduleKey as ModuleKey);
+
+    // 4. Get permissions for user's role
+    const permissions = (ROLE_PERMISSIONS[membership.role] || []) as Permission[];
+
+    // 5. Generate JWT payload
+    const payload: JWTPayload = {
+      sub: user.id,
+      tenant_id: membership.tenantId,
+      role: membership.role as Role,
+      permissions,
+      modules,
+      jti: crypto.randomUUID(), // Unique token ID for potential blacklisting
+    };
+
+    // 6. Sign JWT (30 day expiration)
+    const accessToken = jwt.sign(payload, JWT_SECRET as string, {
+      expiresIn: '30d',
+    });
+
+    return {
+      accessToken,
+      payload,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.fullName,
+      },
+      tenant: {
+        id: membership.tenantId,
+      },
     };
   }
 }

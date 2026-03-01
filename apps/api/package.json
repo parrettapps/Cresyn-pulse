@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:security": "vitest run tests/security"
+    "test:security": "vitest run tests/security",
+    "seed:crm": "tsx --env-file=../../.env src/scripts/seed-crm.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.740.0",

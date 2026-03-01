@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
-import { useAuthStore } from '../store/auth.store.js';
+import { useAuthStore } from '../store/auth.store';
 import type { JWTPayload } from '@cresyn/types';
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
@@ -22,13 +22,29 @@ export function createApiClient(): AxiosInstance {
 
   // ---- Request interceptor: inject auth headers ----
   client.interceptors.request.use((config) => {
-    const { accessToken, tenantId } = useAuthStore.getState();
+    const authState = useAuthStore.getState();
+    const { accessToken, tenantId, isAuthenticated } = authState;
+
+    console.log('[API Client] Request to:', config.url);
+    console.log('[API Client] Auth state:', {
+      hasToken: !!accessToken,
+      tokenPreview: accessToken?.substring(0, 20) + '...',
+      tenantId,
+      isAuthenticated,
+    });
 
     if (accessToken) {
       config.headers['Authorization'] = `Bearer ${accessToken}`;
+      console.log('[API Client] Added Authorization header');
+    } else {
+      console.warn('[API Client] No access token available!');
     }
+
     if (tenantId) {
       config.headers['X-Tenant-ID'] = tenantId;
+      console.log('[API Client] Added X-Tenant-ID header:', tenantId);
+    } else {
+      console.warn('[API Client] No tenant ID available!');
     }
 
     return config;
@@ -78,7 +94,7 @@ export function createApiClient(): AxiosInstance {
         } catch {
           // Refresh failed — clear auth and redirect to login
           useAuthStore.getState().clearAuth();
-          window.location.href = '/login';
+          window.location.href = '/auth/login';
           return Promise.reject(error);
         } finally {
           isRefreshing = false;

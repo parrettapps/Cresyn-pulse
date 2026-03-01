@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from '../../lib/auth.js';
+import { AuthService } from './auth.service.js';
 
 // ============================================================
 // AUTH ROUTES — Powered by Better Auth
@@ -46,6 +47,54 @@ export async function authRoutes(app: FastifyInstance) {
       done(null, null);
     },
   );
+
+  // ============================================================
+  // CUSTOM ENDPOINT: Exchange Better Auth session for JWT
+  //
+  // This endpoint checks the Better Auth session cookie and,
+  // if valid, generates a JWT access token for API requests.
+  //
+  // GET /api/v1/auth/jwt
+  //   Returns: { accessToken, user, tenant }
+  // ============================================================
+  app.get('/jwt', async (request, reply) => {
+    // Get the Better Auth session
+    const session = await auth.api.getSession({
+      headers: request.headers as any,
+    });
+
+    if (!session?.user) {
+      return reply.code(401).send({
+        type: 'https://api.cresyn.com/errors/unauthorized',
+        title: 'Unauthorized',
+        status: 401,
+        detail: 'No active session found. Please sign in first.',
+        instance: request.url,
+        requestId: request.id,
+      });
+    }
+
+    try {
+      // Generate JWT token
+      const result = await AuthService.generateJWT(session.user.email);
+
+      return reply.send({
+        accessToken: result.accessToken,
+        payload: result.payload,
+        user: result.user,
+        tenant: result.tenant,
+      });
+    } catch (error: any) {
+      return reply.code(400).send({
+        type: 'https://api.cresyn.com/errors/validation',
+        title: 'Validation Error',
+        status: 400,
+        detail: error.message || 'Failed to generate JWT token',
+        instance: request.url,
+        requestId: request.id,
+      });
+    }
+  });
 
   // Catch-all: forward all /api/v1/auth/* requests to Better Auth.
   app.all('/*', async (request, reply) => {

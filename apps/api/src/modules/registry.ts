@@ -17,32 +17,32 @@ export interface ApiModule {
 }
 
 // Import module route plugins (added as modules are built)
-import { crmRoutes } from './crm/crm.routes.js';
+import { accountsRoutes } from './accounts/accounts.routes.js';
 import { pipelineRoutes } from './pipeline/pipeline.routes.js';
 import { timesheetRoutes } from './timesheets/timesheets.routes.js';
 import { projectRoutes } from './projects/projects.routes.js';
 
 export const moduleRegistry: ApiModule[] = [
   {
-    key: 'crm',
-    name: 'CRM',
+    key: 'accounts',
+    name: 'Accounts',
     version: '1.0.0',
-    routes: crmRoutes,
+    routes: accountsRoutes,
     permissions: [
-      'crm:companies:read',
-      'crm:companies:create',
-      'crm:companies:update',
-      'crm:companies:delete',
-      'crm:contacts:read',
-      'crm:contacts:create',
-      'crm:contacts:update',
-      'crm:contacts:delete',
-      'crm:notes:read',
-      'crm:notes:create',
-      'crm:notes:update',
-      'crm:notes:delete',
-      'crm:documents:read',
-      'crm:documents:upload',
+      'accounts:companies:read',
+      'accounts:companies:create',
+      'accounts:companies:update',
+      'accounts:companies:delete',
+      'accounts:contacts:read',
+      'accounts:contacts:create',
+      'accounts:contacts:update',
+      'accounts:contacts:delete',
+      'accounts:notes:read',
+      'accounts:notes:create',
+      'accounts:notes:update',
+      'accounts:notes:delete',
+      'accounts:documents:read',
+      'accounts:documents:upload',
     ],
   },
   {

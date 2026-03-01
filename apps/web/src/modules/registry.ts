@@ -30,13 +30,13 @@ export interface WebModule {
 // Modules are imported lazily as they are built
 export const webModuleRegistry: WebModule[] = [
   {
-    key: 'crm',
-    name: 'CRM',
-    description: 'Companies, contacts, and notes',
-    requiredPermissions: ['crm:companies:read'],
+    key: 'accounts',
+    name: 'Accounts',
+    description: 'Companies, contacts, and relationships',
+    requiredPermissions: ['accounts:companies:read'],
     navItems: [
-      { label: 'Companies', path: '/app/crm/companies' },
-      { label: 'Contacts', path: '/app/crm/contacts' },
+      { label: 'Companies', path: '/app/accounts/companies' },
+      { label: 'Contacts', path: '/app/accounts/contacts' },
     ],
   },
   {

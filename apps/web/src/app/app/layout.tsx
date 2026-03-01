@@ -1,22 +1,30 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSession } from '../../hooks/use-session';
+import { useAuthStore } from '../../store/auth.store';
 import { Sidebar } from '../../components/layout/sidebar';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = useSession();
+  const { isAuthenticated, userId, _hasHydrated } = useAuthStore();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
 
+  // Wait for hydration to avoid hydration mismatch
   useEffect(() => {
-    if (!isPending && !session) {
+    setMounted(true);
+  }, []);
+
+  // Check JWT auth — only after both mounted AND store has rehydrated
+  useEffect(() => {
+    if (mounted && _hasHydrated && !isAuthenticated) {
+      console.log('[App Layout] Not authenticated after hydration, redirecting to login');
       router.replace('/auth/login');
     }
-  }, [isPending, session, router]);
+  }, [mounted, _hasHydrated, isAuthenticated, router]);
 
-  // Loading state — centered spinner with primary green
-  if (isPending) {
+  // Show loading spinner until both mounted and hydrated
+  if (!mounted || !_hasHydrated) {
     return (
       <div className="flex h-full items-center justify-center bg-neutral-50">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
@@ -24,20 +32,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Not authenticated — will redirect, render nothing to avoid flash
-  if (!session) {
-    return null;
+  // After hydration, if not authenticated, show loading while redirect happens
+  if (!isAuthenticated) {
+    return (
+      <div className="flex h-full items-center justify-center bg-neutral-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+      </div>
+    );
   }
 
-  const { user } = session;
+  // Get user info from auth store (we don't need Better Auth session here)
+  const userEmail = 'user@example.com'; // Placeholder - we can enhance this later
+  const userName = 'User';
 
   return (
     <div className="flex h-full overflow-hidden bg-neutral-50">
       {/* ── Left sidebar ────────────────────────────────────────── */}
       <Sidebar
-        userEmail={user.email}
-        userName={user.name ?? null}
-        userAvatar={user.image ?? null}
+        userEmail={userEmail}
+        userName={userName}
+        userAvatar={null}
       />
 
       {/* ── Main column ─────────────────────────────────────────── */}
@@ -51,10 +65,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2.5 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5">
               <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-500/15 text-[10px] font-semibold text-primary-700">
-                {(user.name ?? user.email).charAt(0).toUpperCase()}
+                {userName.charAt(0).toUpperCase()}
               </div>
               <span className="hidden text-sm font-medium text-neutral-700 sm:block">
-                {user.name ?? user.email}
+                {userName}
               </span>
             </div>
           </div>

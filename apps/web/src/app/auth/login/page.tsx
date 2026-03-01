@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { signIn } from '../../../lib/auth-client';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
+import { apiClient } from '../../../lib/api-client';
+import { useAuthStore } from '../../../store/auth.store';
 
 const loginSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -67,6 +69,8 @@ export default function LoginPage() {
 
   async function onSubmit(values: LoginFormValues) {
     setServerError(null);
+
+    // Step 1: Authenticate with Better Auth
     const result = await signIn.email({
       email: values.email,
       password: values.password,
@@ -78,7 +82,36 @@ export default function LoginPage() {
       return;
     }
 
-    router.push('/app');
+    // Step 2: Exchange Better Auth session for JWT token
+    try {
+      const jwtResponse = await apiClient.get('/auth/jwt');
+      const { accessToken, payload } = jwtResponse.data;
+
+      console.log('[Login] JWT received, storing in auth store');
+      console.log('[Login] Access token:', accessToken?.substring(0, 20) + '...');
+      console.log('[Login] Payload:', payload);
+
+      // Step 3: Store JWT in auth store
+      useAuthStore.getState().setAuth(accessToken, payload);
+
+      // Verify it was stored
+      const storedState = useAuthStore.getState();
+      console.log('[Login] Auth state after setAuth:', {
+        hasToken: !!storedState.accessToken,
+        isAuthenticated: storedState.isAuthenticated,
+        tenantId: storedState.tenantId,
+        userId: storedState.userId,
+      });
+
+      // Step 4: Wait for persistence to complete, then navigate
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      console.log('[Login] Navigating to /app');
+      router.push('/app');
+    } catch (error: any) {
+      setServerError('Failed to complete login. Please try again.');
+      console.error('JWT exchange failed:', error);
+    }
   }
 
   return (

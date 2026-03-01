@@ -1,0 +1,2 @@
+ALTER TABLE "companies" ADD COLUMN "company_code" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "companies_code_unique" ON "companies" USING btree ("tenant_id","company_code") WHERE "companies"."deleted_at" IS NULL;

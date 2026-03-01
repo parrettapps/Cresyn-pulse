@@ -311,6 +311,7 @@ export const companies = pgTable(
       .notNull()
       .references(() => tenants.id),
     name: text('name').notNull(),
+    companyCode: text('company_code'),
     type: text('type').notNull().default('customer'),
     website: text('website'),
     email: text('email'),
@@ -338,6 +339,9 @@ export const companies = pgTable(
       .where(sql`${table.deletedAt} IS NULL`),
     index('companies_type_idx')
       .on(table.tenantId, table.type)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex('companies_code_unique')
+      .on(table.tenantId, table.companyCode)
       .where(sql`${table.deletedAt} IS NULL`),
   ],
 );
@@ -441,6 +445,34 @@ export const documents = pgTable(
 );
 
 // ============================================================
+// PIPELINE: PIPELINES (multiple sales motions)
+// ============================================================
+export const pipelines = pgTable(
+  'pipelines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    name: text('name').notNull(),
+    description: text('description'),
+    isDefault: boolean('is_default').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    position: integer('position').notNull(),
+    ...auditColumns,
+  },
+  (table) => [
+    index('pipelines_tenant_idx')
+      .on(table.tenantId, table.isActive, table.position)
+      .where(sql`${table.deletedAt} IS NULL`),
+    // Enforce one default pipeline per tenant
+    uniqueIndex('pipelines_tenant_default_unique')
+      .on(table.tenantId)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
+  ],
+);
+
+// ============================================================
 // PIPELINE: STAGES
 // ============================================================
 export const pipelineStages = pgTable(
@@ -450,17 +482,25 @@ export const pipelineStages = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
+    pipelineId: uuid('pipeline_id')
+      .notNull()
+      .references(() => pipelines.id),
     name: text('name').notNull(),
     position: integer('position').notNull(),
+    defaultProbability: integer('default_probability').notNull().default(0),
     isWon: boolean('is_won').notNull().default(false),
     isLost: boolean('is_lost').notNull().default(false),
     color: text('color').default('#6b7280'),
     ...auditColumns,
   },
   (table) => [
+    index('pipeline_stages_pipeline_idx')
+      .on(table.pipelineId, table.position)
+      .where(sql`${table.deletedAt} IS NULL`),
     index('pipeline_stages_tenant_idx')
       .on(table.tenantId, table.position)
       .where(sql`${table.deletedAt} IS NULL`),
+    check('stages_probability_check', sql`${table.defaultProbability} BETWEEN 0 AND 100`),
   ],
 );
 
@@ -474,6 +514,9 @@ export const pipelineDeals = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
+    pipelineId: uuid('pipeline_id')
+      .notNull()
+      .references(() => pipelines.id),
     companyId: uuid('company_id').references(() => companies.id),
     contactId: uuid('contact_id').references(() => contacts.id),
     stageId: uuid('stage_id')
@@ -483,11 +526,19 @@ export const pipelineDeals = pgTable(
     value: numeric('value', { precision: 15, scale: 2 }),
     currency: text('currency').notNull().default('USD'),
     probability: integer('probability'),
+    probabilityOverride: boolean('probability_override').notNull().default(false),
     expectedClose: date('expected_close'),
     actualClose: date('actual_close'),
     ownerId: uuid('owner_id').references(() => users.id),
     status: text('status').notNull().default('open'),
+    source: text('source'), // 'inbound', 'outbound', 'referral', 'partner'
+    dealType: text('deal_type'), // 'new_business', 'expansion', 'renewal', 'churn_recovery'
+    forecastCategory: text('forecast_category'), // 'commit', 'best_case', 'pipeline', 'omitted'
+    nextStepDescription: text('next_step_description'),
+    nextStepDueDate: date('next_step_due_date'),
     lostReason: text('lost_reason'),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
+    lastActivityType: text('last_activity_type'),
     metadata: jsonb('metadata').default({}),
     ...auditColumns,
     ...auditByColumns,
@@ -496,12 +547,90 @@ export const pipelineDeals = pgTable(
     index('deals_tenant_status_idx')
       .on(table.tenantId, table.status)
       .where(sql`${table.deletedAt} IS NULL`),
+    index('deals_pipeline_idx')
+      .on(table.pipelineId, table.status)
+      .where(sql`${table.deletedAt} IS NULL`),
     index('deals_stage_idx').on(table.stageId).where(sql`${table.deletedAt} IS NULL`),
     index('deals_owner_idx')
       .on(table.tenantId, table.ownerId)
       .where(sql`${table.deletedAt} IS NULL`),
     index('deals_company_idx').on(table.companyId).where(sql`${table.deletedAt} IS NULL`),
+    index('deals_forecast_idx')
+      .on(table.tenantId, table.status, table.forecastCategory, table.expectedClose)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index('deals_close_date_idx')
+      .on(table.tenantId, table.expectedClose)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.status} = 'open'`),
     check('deals_probability_check', sql`${table.probability} BETWEEN 0 AND 100`),
+  ],
+);
+
+// ============================================================
+// PIPELINE: DEAL STAGE HISTORY
+// ============================================================
+export const dealStageHistory = pgTable(
+  'deal_stage_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    dealId: uuid('deal_id')
+      .notNull()
+      .references(() => pipelineDeals.id, { onDelete: 'cascade' }),
+    fromStageId: uuid('from_stage_id').references(() => pipelineStages.id),
+    toStageId: uuid('to_stage_id')
+      .notNull()
+      .references(() => pipelineStages.id),
+    daysInPreviousStage: integer('days_in_previous_stage'),
+    movedBy: uuid('moved_by').references(() => users.id),
+    movedAt: timestamp('moved_at', { withTimezone: true }).notNull().defaultNow(),
+    notes: text('notes'),
+  },
+  (table) => [
+    index('deal_history_deal_idx').on(table.dealId, table.movedAt),
+    index('deal_history_tenant_stage_idx').on(table.tenantId, table.toStageId, table.movedAt),
+  ],
+);
+
+// ============================================================
+// ACTIVITIES (calls, meetings, emails, tasks)
+// ============================================================
+export const activities = pgTable(
+  'activities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    resourceType: text('resource_type').notNull(), // 'deal', 'company', 'contact', 'project'
+    resourceId: uuid('resource_id').notNull(),
+    activityType: text('activity_type').notNull(), // 'call', 'meeting', 'email', 'task', 'note'
+    direction: text('direction'), // 'inbound', 'outbound' (for calls/emails)
+    subject: text('subject').notNull(),
+    description: text('description'),
+    dueDate: date('due_date'), // Calendar date (no timezone)
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    ownerId: uuid('owner_id').references(() => users.id),
+    relatedContactId: uuid('related_contact_id').references(() => contacts.id),
+    duration: integer('duration'), // Minutes (for calls/meetings)
+    outcome: text('outcome'),
+    metadata: jsonb('metadata').default({}),
+    ...auditColumns,
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    updatedBy: uuid('updated_by').references(() => users.id),
+  },
+  (table) => [
+    index('activities_resource_idx')
+      .on(table.tenantId, table.resourceType, table.resourceId, table.createdAt),
+    index('activities_owner_due_idx')
+      .on(table.ownerId, table.dueDate)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.activityType} = 'task' AND ${table.completedAt} IS NULL`),
+    index('activities_type_idx')
+      .on(table.tenantId, table.activityType, table.createdAt)
+      .where(sql`${table.deletedAt} IS NULL`),
   ],
 );
 
@@ -799,6 +928,7 @@ export const tenantsRelations = relations(tenants, ({ many, one }) => ({
   modules: many(tenantModules),
   companies: many(companies),
   contacts: many(contacts),
+  pipelines: many(pipelines),
   deals: many(pipelineDeals),
   projects: many(projects),
 }));
@@ -823,13 +953,44 @@ export const contactsRelations = relations(contacts, ({ one }) => ({
   company: one(companies, { fields: [contacts.companyId], references: [companies.id] }),
 }));
 
+export const pipelinesRelations = relations(pipelines, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [pipelines.tenantId], references: [tenants.id] }),
+  stages: many(pipelineStages),
+  deals: many(pipelineDeals),
+}));
+
+export const pipelineStagesRelations = relations(pipelineStages, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [pipelineStages.tenantId], references: [tenants.id] }),
+  pipeline: one(pipelines, { fields: [pipelineStages.pipelineId], references: [pipelines.id] }),
+  deals: many(pipelineDeals),
+  stageHistory: many(dealStageHistory),
+}));
+
 export const pipelineDealsRelations = relations(pipelineDeals, ({ one, many }) => ({
   tenant: one(tenants, { fields: [pipelineDeals.tenantId], references: [tenants.id] }),
+  pipeline: one(pipelines, { fields: [pipelineDeals.pipelineId], references: [pipelines.id] }),
   company: one(companies, { fields: [pipelineDeals.companyId], references: [companies.id] }),
   contact: one(contacts, { fields: [pipelineDeals.contactId], references: [contacts.id] }),
   stage: one(pipelineStages, { fields: [pipelineDeals.stageId], references: [pipelineStages.id] }),
   quotes: many(quotes),
   projects: many(projects),
+  stageHistory: many(dealStageHistory),
+}));
+
+export const dealStageHistoryRelations = relations(dealStageHistory, ({ one }) => ({
+  tenant: one(tenants, { fields: [dealStageHistory.tenantId], references: [tenants.id] }),
+  deal: one(pipelineDeals, { fields: [dealStageHistory.dealId], references: [pipelineDeals.id] }),
+  fromStage: one(pipelineStages, { fields: [dealStageHistory.fromStageId], references: [pipelineStages.id] }),
+  toStage: one(pipelineStages, { fields: [dealStageHistory.toStageId], references: [pipelineStages.id] }),
+  movedByUser: one(users, { fields: [dealStageHistory.movedBy], references: [users.id] }),
+}));
+
+export const activitiesRelations = relations(activities, ({ one }) => ({
+  tenant: one(tenants, { fields: [activities.tenantId], references: [tenants.id] }),
+  owner: one(users, { fields: [activities.ownerId], references: [users.id] }),
+  relatedContact: one(contacts, { fields: [activities.relatedContactId], references: [contacts.id] }),
+  createdByUser: one(users, { fields: [activities.createdBy], references: [users.id] }),
+  updatedByUser: one(users, { fields: [activities.updatedBy], references: [users.id] }),
 }));
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
@@ -868,9 +1029,16 @@ export type NewContact = typeof contacts.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type Document = typeof documents.$inferSelect;
+export type Pipeline = typeof pipelines.$inferSelect;
+export type NewPipeline = typeof pipelines.$inferInsert;
 export type PipelineStage = typeof pipelineStages.$inferSelect;
+export type NewPipelineStage = typeof pipelineStages.$inferInsert;
 export type PipelineDeal = typeof pipelineDeals.$inferSelect;
 export type NewPipelineDeal = typeof pipelineDeals.$inferInsert;
+export type DealStageHistory = typeof dealStageHistory.$inferSelect;
+export type NewDealStageHistory = typeof dealStageHistory.$inferInsert;
+export type Activity = typeof activities.$inferSelect;
+export type NewActivity = typeof activities.$inferInsert;
 export type Quote = typeof quotes.$inferSelect;
 export type NewQuote = typeof quotes.$inferInsert;
 export type QuoteLineItem = typeof quoteLineItems.$inferSelect;
